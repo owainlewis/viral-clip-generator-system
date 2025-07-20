@@ -149,7 +149,7 @@ def combine_random_clips(video_folder, audio_folder, output_file="output.mp4", n
             .run(quiet=True)
         )
         
-        print(f"✅ Successfully created: {output_file}")
+        print(f"Successfully created: {output_file}")
         
     finally:
         # Clean up temporary files
@@ -171,7 +171,7 @@ def main():
     try:
         combine_random_clips(VIDEO_FOLDER, AUDIO_FOLDER, OUTPUT_FILE, NUM_CLIPS)
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
     main()
