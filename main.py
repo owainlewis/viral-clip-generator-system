@@ -164,7 +164,7 @@ def main():
     AUDIO_FOLDER = "audio" 
     
     # Generate timestamped filename
-    timestamp = datetime.now().strftime("%y-%m-%d-%H-%M")
+    timestamp = datetime.now().strftime("%y-%m-%d-%H-%M-%S")
     OUTPUT_FILE = f"output/felt-adventures-{timestamp}.mp4"
     NUM_CLIPS = 7
     
