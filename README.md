@@ -17,7 +17,7 @@ Perfect for content creators, marketers, and anyone looking to generate unlimite
 1. **Create and activate virtual environment:**
    ```bash
    uv venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   source .venv/bin/activate
    ```
 
 2. **Install dependencies:**
