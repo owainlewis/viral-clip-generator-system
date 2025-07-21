@@ -86,4 +86,6 @@ python main.py --clips a.mp4 b.mp4 --audio song.mp3 --output compilation.mp4
 
 Build your media library once, generate unlimited viral content forever!
 
-See example.mp4
+## Example Output
+
+![Example Output](example.gif)
