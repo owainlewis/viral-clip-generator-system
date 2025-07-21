@@ -35,6 +35,46 @@ Perfect for content creators, marketers, and anyone looking to generate unlimite
    python main.py
    ```
 
+## Usage
+
+The tool supports both random selection (default) and specific clip/audio selection:
+
+### Random Selection (Original Behavior)
+```bash
+python main.py                    # Randomly selects 7 clips and random audio
+python main.py --num-clips 10     # Randomly selects 10 clips and random audio
+```
+
+### Specific Selection
+```bash
+# Use specific clips with random audio
+python main.py --clips clip1.mp4 clip2.mp4 clip3.mp4
+
+# Use random clips with specific audio
+python main.py --audio background-music.mp3
+
+# Full control over clips and audio
+python main.py --clips clip1.mp4 clip2.mp4 --audio music.mp3
+
+# Custom output filename
+python main.py --output my-compilation.mp4
+```
+
+### CLI Options
+- `--clips` - Specify exact video clips to use (filenames from clips/ folder)
+- `--audio` - Specify exact audio file to use (filename from audio/ folder)  
+- `--num-clips` - Number of random clips to select when not using --clips (default: 7)
+- `--output` - Custom output filename (default: timestamped filename in output/ folder)
+
+### Examples
+```bash
+python main.py --help                                    # Show help
+python main.py                                          # Default: 7 random clips + random audio
+python main.py --clips funny1.mp4 funny2.mp4            # Specific clips, random audio
+python main.py --audio upbeat-song.mp3 --num-clips 5    # 5 random clips, specific audio
+python main.py --clips a.mp4 b.mp4 --audio song.mp3 --output compilation.mp4
+```
+
 ## How it works
 
 - **Smart Selection**: Uses rotation algorithms to prioritize least-used clips from your media library
