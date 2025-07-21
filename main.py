@@ -52,13 +52,13 @@ def select_clips_with_rotation(video_files, num_clips, usage_data):
 
 def combine_random_clips(video_folder, audio_folder, output_file="output.mp4", num_clips=5):
     """
-    Randomly select video clips and audio, combine them into one video.
+    Intelligently select video clips using rotation algorithm and combine with audio.
     
     Args:
         video_folder: Path to folder containing MP4 video clips
         audio_folder: Path to folder containing MP3 audio files
         output_file: Name of the output video file
-        num_clips: Number of video clips to randomly select (default: 5)
+        num_clips: Number of video clips to select (default: 5)
     """
     
     # Check if directories exist
@@ -76,8 +76,8 @@ def combine_random_clips(video_folder, audio_folder, output_file="output.mp4", n
     video_files = [f for f in os.listdir(video_folder) if f.lower().endswith('.mp4')]
     audio_files = [f for f in os.listdir(audio_folder) if f.lower().endswith('.mp3')]
     
-    if len(video_files) < num_clips:
-        raise ValueError(f"Not enough video files. Found {len(video_files)}, need {num_clips}")
+    if len(video_files) == 0:
+        raise ValueError("No video files found in the clips folder")
     
     if len(audio_files) == 0:
         raise ValueError("No audio files found")
@@ -165,7 +165,7 @@ def main():
     
     # Generate timestamped filename
     timestamp = datetime.now().strftime("%y-%m-%d-%H-%M-%S")
-    OUTPUT_FILE = f"output/felt-adventures-{timestamp}.mp4"
+    OUTPUT_FILE = f"output/viral-clip-{timestamp}.mp4"
     NUM_CLIPS = 7
     
     try:

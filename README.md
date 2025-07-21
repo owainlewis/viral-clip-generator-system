@@ -1,10 +1,16 @@
-# Felt Adventures - Video Clip Generator
+# Viral Clip Generator System
 
-A Python tool that automatically creates compilation videos by combining multiple video clips with background music.
+An AI-powered video processing tool that intelligently combines video clips with background audio to create unlimited compilation videos. Build a high-quality media library and generate viral content automatically.
 
 ## What it does
 
-This tool randomly selects video clips from your collection and joins them together with a single background audio track to create compilation videos. Perfect for creating highlight reels, montages, or compilation content.
+This system creates unlimited video content by:
+- Intelligently selecting from your media library of high-quality clips
+- Using AI-driven rotation algorithms to ensure fair usage across all clips
+- Combining clips with background music to create engaging compilations
+- Building a sustainable content generation pipeline for viral videos
+
+Perfect for content creators, marketers, and anyone looking to generate unlimited video content from their media library.
 
 ## Setup
 
@@ -16,7 +22,7 @@ This tool randomly selects video clips from your collection and joins them toget
 
 2. **Install dependencies:**
    ```bash
-   uv pip install ffmpeg-python
+   uv sync
    ```
 
 3. **Create required folders and add your content:**
@@ -31,10 +37,11 @@ This tool randomly selects video clips from your collection and joins them toget
 
 ## How it works
 
-- Randomly selects video clips from the `clips/` folder
-- Joins them together in sequence
-- Adds background music from the `audio/` folder
-- Outputs a timestamped video file in the `output/` folder
-- Uses a rotation system to ensure all clips get used fairly over time
+- **Smart Selection**: Uses rotation algorithms to prioritize least-used clips from your media library
+- **Intelligent Combination**: Seamlessly joins selected clips in sequence
+- **Audio Integration**: Adds background music with automatic volume balancing and fade effects
+- **Automated Output**: Generates timestamped videos in the `output/` folder
+- **Fair Usage Tracking**: Maintains statistics to ensure all clips get equal representation over time
+- **Unlimited Generation**: Each run creates unique compilations, providing endless content possibilities
 
-That's it! Each run creates a unique compilation with different clips and music.
+Build your media library once, generate unlimited viral content forever!

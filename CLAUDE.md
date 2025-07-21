@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Python-based video processing tool called "felt-adventures" that intelligently combines video clips with background audio to create compilation videos. The project uses FFmpeg (via ffmpeg-python) for video processing and includes a sophisticated clip rotation system to ensure fair usage across all available clips.
+This is a Python-based video processing tool called "viral-clip-generator-system" that intelligently combines video clips with background audio to create compilation videos. The project uses FFmpeg (via ffmpeg-python) for video processing and includes a sophisticated clip rotation system to ensure fair usage across all available clips.
 
 ## Architecture
 
@@ -54,7 +54,7 @@ pip install ffmpeg-python
 Key configuration variables in main.py (main:162-169):
 - `VIDEO_FOLDER`: Source directory for video clips (default: "clips")
 - `AUDIO_FOLDER`: Source directory for audio files (default: "audio") 
-- `OUTPUT_FILE`: Timestamped filename pattern (default: "output/felt-adventures-{timestamp}.mp4")
+- `OUTPUT_FILE`: Timestamped filename pattern (default: "output/viral-clip-{timestamp}.mp4")
 - `NUM_CLIPS`: Number of clips to select (default: 7)
 
 ## Clip Rotation Algorithm

@@ -1,7 +1,7 @@
 [project]
-name = "felt-adventures"
+name = "viral-clip-generator-system"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI-powered video processing tool that intelligently combines clips to create unlimited viral content"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
