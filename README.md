@@ -85,3 +85,5 @@ python main.py --clips a.mp4 b.mp4 --audio song.mp3 --output compilation.mp4
 - **Unlimited Generation**: Each run creates unique compilations, providing endless content possibilities
 
 Build your media library once, generate unlimited viral content forever!
+
+See example.mp4
