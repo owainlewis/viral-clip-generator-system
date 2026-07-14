@@ -1,214 +1,309 @@
 #!/usr/bin/env python3
-"""
-Viral Clip Generator System
+"""Build a compilation video from local clips and background audio."""
 
-An intelligent video processing tool that combines video clips with background audio
-to create compilation videos using fair rotation algorithms.
-"""
+from __future__ import annotations
 
 import argparse
 import json
+import math
+import os
 import random
+import sys
 import tempfile
+import time
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import TypedDict
 
 import ffmpeg
 
-# Configuration constants
 DEFAULT_NUM_CLIPS = 7
 DEFAULT_USAGE_FILE = "clip_usage.json"
-SUPPORTED_VIDEO_EXTENSIONS = ('.mp4',)
-SUPPORTED_AUDIO_EXTENSIONS = ('.mp3',)
+SUPPORTED_VIDEO_EXTENSIONS = (".mp4",)
+SUPPORTED_AUDIO_EXTENSIONS = (".mp3",)
 AUDIO_VOLUME = 0.8
 FADE_DURATION_SECONDS = 2.0
 FADE_DURATION_PERCENTAGE = 0.1
 
 
+class UsageRecord(TypedDict):
+    """Persisted usage data for one clip."""
+
+    last_used: float
+    usage_count: int
+
+
 class UsageTracker:
-    """Handles clip usage tracking and rotation logic."""
-    
-    def __init__(self, usage_file: str = DEFAULT_USAGE_FILE):
+    """Persist clip usage and select the least recently used clips first."""
+
+    def __init__(
+        self,
+        usage_file: str | Path = DEFAULT_USAGE_FILE,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         self.usage_file = Path(usage_file)
+        self._clock = clock
         self.usage_data = self._load_usage_data()
-    
-    def _load_usage_data(self) -> Dict[str, Dict[str, float]]:
-        """Load clip usage tracking data from JSON file."""
+
+    def _load_usage_data(self) -> dict[str, UsageRecord]:
         if not self.usage_file.exists():
             return {}
-        
+
         try:
-            with open(self.usage_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            return {}
-    
+            raw_data = json.loads(self.usage_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            raise RuntimeError(
+                f"Could not read clip usage data from '{self.usage_file}': {exc}"
+            ) from exc
+
+        if not isinstance(raw_data, dict):
+            raise RuntimeError(
+                f"Clip usage data in '{self.usage_file}' must be an object"
+            )
+
+        usage_data: dict[str, UsageRecord] = {}
+        for clip, record in raw_data.items():
+            if not isinstance(clip, str) or not isinstance(record, dict):
+                raise RuntimeError(f"Invalid clip usage entry in '{self.usage_file}'")
+
+            last_used = record.get("last_used")
+            usage_count = record.get("usage_count")
+            valid_last_used = (
+                isinstance(last_used, (int, float))
+                and not isinstance(last_used, bool)
+                and math.isfinite(last_used)
+                and last_used >= 0
+            )
+            valid_usage_count = (
+                isinstance(usage_count, int)
+                and not isinstance(usage_count, bool)
+                and usage_count >= 0
+            )
+            if not valid_last_used or not valid_usage_count:
+                raise RuntimeError(
+                    f"Invalid usage values for clip '{clip}' in '{self.usage_file}'"
+                )
+
+            usage_data[clip] = {
+                "last_used": float(last_used),
+                "usage_count": usage_count,
+            }
+
+        return usage_data
+
     def save_usage_data(self) -> None:
-        """Save clip usage tracking data to JSON file."""
+        """Atomically save usage data so interruption cannot corrupt the file."""
+        self.usage_file.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path: Path | None = None
+
         try:
-            with open(self.usage_file, 'w', encoding='utf-8') as f:
-                json.dump(self.usage_data, f, indent=2)
-        except OSError as e:
-            raise RuntimeError(f"Could not save clip usage data: {e}")
-    
-    def update_usage(self, clips: List[str]) -> None:
-        """Update usage statistics for the given clips."""
-        current_time = datetime.now().timestamp()
-        
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self.usage_file.parent,
+                prefix=f".{self.usage_file.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary_file:
+                temporary_path = Path(temporary_file.name)
+                json.dump(self.usage_data, temporary_file, indent=2, sort_keys=True)
+                temporary_file.write("\n")
+                temporary_file.flush()
+                os.fsync(temporary_file.fileno())
+
+            os.replace(temporary_path, self.usage_file)
+        except OSError as exc:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+            raise RuntimeError(f"Could not save clip usage data: {exc}") from exc
+
+    def update_usage(self, clips: Sequence[str]) -> None:
+        current_time = self._clock()
+
         for clip in clips:
-            if clip not in self.usage_data:
-                self.usage_data[clip] = {"last_used": 0, "usage_count": 0}
-            
-            self.usage_data[clip]["last_used"] = current_time
-            self.usage_data[clip]["usage_count"] += 1
-    
-    def select_clips_with_rotation(self, available_clips: List[str], num_clips: int) -> List[str]:
-        """Select clips prioritizing least recently used ones."""
-        def sort_key(clip: str) -> Tuple[float, int]:
-            clip_data = self.usage_data.get(clip, {"last_used": 0, "usage_count": 0})
-            return (clip_data["last_used"], clip_data["usage_count"])
-        
+            record = self.usage_data.setdefault(
+                clip, {"last_used": 0.0, "usage_count": 0}
+            )
+            record["last_used"] = current_time
+            record["usage_count"] += 1
+
+    def select_clips_with_rotation(
+        self, available_clips: Sequence[str], num_clips: int
+    ) -> list[str]:
+        if num_clips < 1:
+            raise ValueError("Number of clips must be at least 1")
+        if not available_clips:
+            raise ValueError("No video clips are available")
+
+        def sort_key(clip: str) -> tuple[float, int, str]:
+            record = self.usage_data.get(clip, {"last_used": 0.0, "usage_count": 0})
+            return (record["last_used"], record["usage_count"], clip.casefold())
+
         sorted_clips = sorted(available_clips, key=sort_key)
-        
         if len(sorted_clips) >= num_clips:
             return sorted_clips[:num_clips]
-        else:
-            # If we need more clips than available, repeat some randomly
-            remaining_needed = num_clips - len(sorted_clips)
-            repeated_clips = random.choices(sorted_clips, k=remaining_needed)
-            return sorted_clips + repeated_clips
+
+        remaining = num_clips - len(sorted_clips)
+        return sorted_clips + random.choices(sorted_clips, k=remaining)
 
 
 class MediaValidator:
-    """Validates media files and directories."""
-    
+    """Validate input directories and list supported media files."""
+
     @staticmethod
     def validate_directory(path: Path, name: str) -> None:
-        """Validate that a directory exists."""
         if not path.exists():
             raise FileNotFoundError(f"{name} folder '{path}' does not exist")
         if not path.is_dir():
             raise NotADirectoryError(f"{name} path '{path}' is not a directory")
-    
+
     @staticmethod
-    def get_media_files(directory: Path, extensions: Tuple[str, ...]) -> List[str]:
-        """Get all media files with specified extensions from directory."""
-        files = [
-            f.name for f in directory.iterdir()
-            if f.is_file() and f.suffix.lower() in extensions
-        ]
-        
+    def get_media_files(directory: Path, extensions: tuple[str, ...]) -> list[str]:
+        files: list[str] = []
+        for path in directory.iterdir():
+            if not path.is_file() or path.suffix.lower() not in extensions:
+                continue
+            if "\r" in path.name or "\n" in path.name:
+                raise ValueError(
+                    f"Media filename cannot contain line breaks: {path.name!r}"
+                )
+            files.append(path.name)
+
+        files.sort(key=str.casefold)
         if not files:
-            ext_str = ', '.join(extensions)
-            raise ValueError(f"No files with extensions {ext_str} found in {directory}")
-        
+            extension_list = ", ".join(extensions)
+            raise ValueError(
+                f"No files with extensions {extension_list} found in {directory}"
+            )
         return files
-    
+
     @staticmethod
-    def validate_specific_files(files: List[str], available_files: List[str], directory: Path) -> None:
-        """Validate that all specified files exist in the available files."""
-        for file in files:
-            if file not in available_files:
-                raise FileNotFoundError(f"Specified file '{file}' not found in {directory}")
+    def validate_specific_files(
+        files: Sequence[str], available_files: Sequence[str], directory: Path
+    ) -> None:
+        available = set(available_files)
+        missing = [file for file in files if file not in available]
+        if missing:
+            raise FileNotFoundError(
+                f"Specified file '{missing[0]}' not found in {directory}"
+            )
 
 
 class VideoProcessor:
-    """Handles video processing operations using FFmpeg."""
-    
-    def __init__(self, video_folder: Path, audio_folder: Path):
+    """Combine clips and replace their audio with a background track."""
+
+    def __init__(self, video_folder: Path, audio_folder: Path) -> None:
         self.video_folder = video_folder
         self.audio_folder = audio_folder
-    
+
     def process_clips(
         self,
-        selected_videos: List[str],
+        selected_videos: Sequence[str],
         selected_audio: str,
-        output_file: Path
+        output_file: Path,
     ) -> None:
-        """Process and combine video clips with audio."""
         video_paths = [self.video_folder / video for video in selected_videos]
         audio_path = self.audio_folder / selected_audio
-        
-        # Ensure output directory exists
+        if output_file.suffix.lower() != ".mp4":
+            raise ValueError("Output file must use the .mp4 extension")
         output_file.parent.mkdir(parents=True, exist_ok=True)
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as concat_file:
-            temp_concat_path = Path(concat_file.name)
-            
-            # Write concat file
-            for video_path in video_paths:
-                abs_path = video_path.resolve()
-                concat_file.write(f"file '{abs_path}'\n")
-        
-        temp_video_path = Path(tempfile.mktemp(suffix='.mp4'))
-        
-        try:
-            self._concatenate_videos(temp_concat_path, temp_video_path)
-            video_duration = self._get_video_duration(temp_video_path)
-            self._add_audio(temp_video_path, audio_path, output_file, video_duration)
-            
-            print(f"Successfully created: {output_file}")
-            
-        finally:
-            # Clean up temporary files
-            temp_concat_path.unlink(missing_ok=True)
-            temp_video_path.unlink(missing_ok=True)
-    
+
+        with tempfile.TemporaryDirectory(
+            prefix=".viral-clip-", dir=output_file.parent
+        ) as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            concat_path = temporary_path / "clips.txt"
+            concatenated_video_path = temporary_path / "concatenated.mp4"
+            temporary_output_path = temporary_path / f"result{output_file.suffix}"
+            concat_path.write_text(
+                "".join(
+                    f"file '{self._escape_concat_path(path.resolve())}'\n"
+                    for path in video_paths
+                ),
+                encoding="utf-8",
+            )
+
+            self._concatenate_videos(concat_path, concatenated_video_path)
+            video_duration = self._get_video_duration(concatenated_video_path)
+            self._add_audio(
+                concatenated_video_path,
+                audio_path,
+                temporary_output_path,
+                video_duration,
+            )
+            os.replace(temporary_output_path, output_file)
+
+        print(f"Successfully created: {output_file}")
+
+    @staticmethod
+    def _escape_concat_path(path: Path) -> str:
+        """Escape a path for FFmpeg's single-quoted concat file syntax."""
+        return str(path).replace("'", "'\\''")
+
     def _concatenate_videos(self, concat_file: Path, output_file: Path) -> None:
-        """Concatenate video clips using FFmpeg."""
         print("Concatenating video clips...")
         (
-            ffmpeg
-            .input(str(concat_file), format='concat', safe=0)
-            .output(str(output_file), c='copy')
+            ffmpeg.input(str(concat_file), format="concat", safe=0)
+            .output(str(output_file), c="copy")
             .overwrite_output()
             .run(quiet=True)
         )
-    
+
     def _get_video_duration(self, video_file: Path) -> float:
-        """Get the duration of a video file."""
         probe = ffmpeg.probe(str(video_file))
-        duration = float(probe['streams'][0]['duration'])
-        print(f"Total video duration: {duration:.2f} seconds")
-        return duration
-    
+        candidates = [probe.get("format", {}).get("duration")]
+        candidates.extend(
+            stream.get("duration")
+            for stream in probe.get("streams", [])
+            if stream.get("codec_type") == "video"
+        )
+
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            try:
+                duration = float(candidate)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(duration) and duration > 0:
+                print(f"Total video duration: {duration:.2f} seconds")
+                return duration
+
+        raise RuntimeError(f"Could not determine video duration for '{video_file}'")
+
     def _add_audio(
         self,
         video_file: Path,
         audio_file: Path,
         output_file: Path,
-        video_duration: float
+        video_duration: float,
     ) -> None:
-        """Add background audio to video with fade-out effect."""
         print("Adding background music...")
-        
         video_input = ffmpeg.input(str(video_file))
-        audio_input = ffmpeg.input(str(audio_file))
-        
-        # Calculate fade duration
-        fade_duration = min(FADE_DURATION_SECONDS, video_duration * FADE_DURATION_PERCENTAGE)
-        
-        # Apply audio effects
-        audio_with_volume = ffmpeg.filter(audio_input, 'volume', str(AUDIO_VOLUME))
+        audio_input = ffmpeg.input(str(audio_file), stream_loop=-1)
+        fade_duration = min(
+            FADE_DURATION_SECONDS, video_duration * FADE_DURATION_PERCENTAGE
+        )
+        audio_with_volume = ffmpeg.filter(audio_input, "volume", AUDIO_VOLUME)
         audio_with_fade = ffmpeg.filter(
             audio_with_volume,
-            'afade',
-            t='out',
+            "afade",
+            t="out",
             st=video_duration - fade_duration,
-            d=fade_duration
+            d=fade_duration,
         )
-        
-        # Combine video and audio
+
         (
-            ffmpeg
-            .output(
-                video_input['v'],
+            ffmpeg.output(
+                video_input["v"],
                 audio_with_fade,
                 str(output_file),
                 t=video_duration,
-                vcodec='libx264',
-                acodec='aac'
+                vcodec="libx264",
+                acodec="aac",
+                pix_fmt="yuv420p",
+                movflags="+faststart",
             )
             .overwrite_output()
             .run(quiet=True)
@@ -216,124 +311,135 @@ class VideoProcessor:
 
 
 class ViralClipGenerator:
-    """Main class for generating viral clips."""
-    
-    def __init__(self, video_folder: str = "clips", audio_folder: str = "audio"):
+    """Select media, produce an output video, and record successful usage."""
+
+    def __init__(
+        self,
+        video_folder: str | Path = "clips",
+        audio_folder: str | Path = "audio",
+        usage_file: str | Path = DEFAULT_USAGE_FILE,
+    ) -> None:
         self.video_folder = Path(video_folder)
         self.audio_folder = Path(audio_folder)
-        self.usage_tracker = UsageTracker()
+        self.usage_tracker = UsageTracker(usage_file)
         self.validator = MediaValidator()
         self.processor = VideoProcessor(self.video_folder, self.audio_folder)
-    
+
     def generate(
         self,
-        output_file: str,
+        output_file: str | Path,
         num_clips: int = DEFAULT_NUM_CLIPS,
-        specific_clips: Optional[List[str]] = None,
-        specific_audio: Optional[str] = None
-    ) -> None:
-        """Generate viral clips with specified parameters."""
-        # Validate directories
+        specific_clips: Sequence[str] | None = None,
+        specific_audio: str | None = None,
+    ) -> Path:
         self.validator.validate_directory(self.video_folder, "Video")
         self.validator.validate_directory(self.audio_folder, "Audio")
-        
-        # Get available files
+
         video_files = self.validator.get_media_files(
             self.video_folder, SUPPORTED_VIDEO_EXTENSIONS
         )
         audio_files = self.validator.get_media_files(
             self.audio_folder, SUPPORTED_AUDIO_EXTENSIONS
         )
-        
-        # Select videos
+
         if specific_clips:
-            self.validator.validate_specific_files(specific_clips, video_files, self.video_folder)
-            selected_videos = specific_clips
+            self.validator.validate_specific_files(
+                specific_clips, video_files, self.video_folder
+            )
+            selected_videos = list(specific_clips)
         else:
-            selected_videos = self.usage_tracker.select_clips_with_rotation(video_files, num_clips)
-        
-        # Select audio
+            selected_videos = self.usage_tracker.select_clips_with_rotation(
+                video_files, num_clips
+            )
+
         if specific_audio:
-            self.validator.validate_specific_files([specific_audio], audio_files, self.audio_folder)
+            self.validator.validate_specific_files(
+                [specific_audio], audio_files, self.audio_folder
+            )
             selected_audio = specific_audio
         else:
             selected_audio = random.choice(audio_files)
-        
+
         print(f"Selected videos: {selected_videos}")
         print(f"Selected audio: {selected_audio}")
-        
-        # Update usage tracking
+
+        output_path = Path(output_file)
+        self.processor.process_clips(selected_videos, selected_audio, output_path)
         self.usage_tracker.update_usage(selected_videos)
         self.usage_tracker.save_usage_data()
-        
-        # Process videos
-        self.processor.process_clips(selected_videos, selected_audio, Path(output_file))
+        return output_path
+
+
+def positive_int(value: str) -> int:
+    """Parse a positive integer for argparse."""
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
 
 
 def create_parser() -> argparse.ArgumentParser:
-    """Create and configure argument parser."""
     parser = argparse.ArgumentParser(
-        description="Generate viral clips by combining video clips with background audio",
+        description="Combine video clips with background audio",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        epilog="""\
 Examples:
-  python main.py                           # Random selection (default)
+  python main.py
   python main.py --clips clip1.mp4 clip2.mp4 --audio music.mp3
-  python main.py --clips clip1.mp4 clip2.mp4  # Random audio
-  python main.py --audio music.mp3        # Random clips with specific audio
-  python main.py --num-clips 10           # Select 10 random clips
-        """
-    )
-    
-    parser.add_argument(
-        '--clips',
-        nargs='+',
-        help='Specific video clips to use (filenames from clips/ folder)'
+  python main.py --audio music.mp3 --num-clips 10
+""",
     )
     parser.add_argument(
-        '--audio',
-        help='Specific audio file to use (filename from audio/ folder)'
+        "--clips",
+        nargs="+",
+        help="Specific video clips to use (filenames from clips/)",
     )
     parser.add_argument(
-        '--num-clips',
-        type=int,
+        "--audio", help="Specific audio file to use (filename from audio/)"
+    )
+    parser.add_argument(
+        "--num-clips",
+        type=positive_int,
         default=DEFAULT_NUM_CLIPS,
-        help=f'Number of random clips to select when not specifying --clips (default: {DEFAULT_NUM_CLIPS})'
+        help=(
+            "Number of clips to select when --clips is omitted "
+            f"(default: {DEFAULT_NUM_CLIPS})"
+        ),
     )
     parser.add_argument(
-        '--output',
-        help='Output filename (default: timestamped filename in output/ folder)'
+        "--output",
+        help="Output filename (default: timestamped MP4 in output/)",
     )
-    
     return parser
 
 
-def main() -> None:
-    """Main entry point."""
-    parser = create_parser()
-    args = parser.parse_args()
-    
-    # Generate output filename if not specified
-    if args.output:
-        output_file = args.output
-    else:
-        timestamp = datetime.now().strftime("%y-%m-%d-%H-%M-%S")
-        output_file = f"output/viral-clip-{timestamp}.mp4"
-    
+def describe_error(error: Exception) -> str:
+    """Return useful FFmpeg stderr instead of its generic exception message."""
+    if isinstance(error, ffmpeg.Error) and error.stderr:
+        stderr = error.stderr.decode(errors="replace")
+        detail_lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+        if detail_lines:
+            return f"FFmpeg failed: {detail_lines[-1]}"
+    return str(error)
+
+
+def main() -> int:
+    args = create_parser().parse_args()
+    timestamp = datetime.now().strftime("%y-%m-%d-%H-%M-%S")
+    output_file = args.output or f"output/viral-clip-{timestamp}.mp4"
+
     try:
-        generator = ViralClipGenerator()
-        generator.generate(
+        ViralClipGenerator().generate(
             output_file=output_file,
             num_clips=args.num_clips,
             specific_clips=args.clips,
-            specific_audio=args.audio
+            specific_audio=args.audio,
         )
-    except Exception as e:
-        print(f"Error: {e}")
+    except (OSError, ValueError, RuntimeError, ffmpeg.Error) as exc:
+        print(f"Error: {describe_error(exc)}", file=sys.stderr)
         return 1
-    
     return 0
 
 
 if __name__ == "__main__":
-    exit(main())
+    sys.exit(main())
