@@ -1,13 +1,21 @@
 # Python-generated files
 __pycache__/
 *.py[oc]
+.coverage
+.pytest_cache/
+.ruff_cache/
 build/
 dist/
 wheels/
 *.egg-info
 
 # Virtual environments
-.venv
+.venv/
+
+# Local and generated files
+.DS_Store
+.claude/settings.local.json
+clip_usage.json
 
 clips/*
 audio/*

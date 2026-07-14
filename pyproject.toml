@@ -1,9 +1,28 @@
 [project]
 name = "viral-clip-generator-system"
 version = "0.1.0"
-description = "AI-powered video processing tool that intelligently combines clips to create unlimited viral content"
+description = "Combine local video clips with a background audio track"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "ffmpeg-python>=0.2.0"
+    "ffmpeg-python>=0.2.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "pytest-cov>=6.2.1",
+    "ruff>=0.12.4",
+]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "SIM", "UP"]
